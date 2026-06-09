@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>広報訪問管理</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: sans-serif; font-size: 14px; background: #f5f7fa; color: #222; }
+  input, textarea, select { font-family: sans-serif; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// ========== 設定 ==========
+// ★ここにFirebaseの設定を入れます（後で変更）
+const FIREBASE_URL = "YOUR_FIREBASE_URL";
+// ==========================
+
+const TAGS = ["重点校", "要フォロー", "競合強い", "良好", "新規開拓"];
+const VIEWS = { LIST: "list", DETAIL: "detail", PARSE: "parse", ADD: "add" };
+
+const initialSchools = [
+  {
+    id: 1,
+    name: "サンプル高校",
+    address: "岡山市北区",
+    students: 480,
+    assignee: "福田",
+    tags: ["重点校"],
+    teacher: { name: "山田 太郎", role: "進路指導主任", memo: "面談重視。毎年3月に進路会議あり。" },
+    visits: [{ date: "2026-05-10", author: "福田", note: "進路担当と面談。今年は医療系希望者が増加傾向。" }],
+    career: "医療・福祉系への志望が増加。昨年度は当校へ2名入学。"
+  }
+];
+
+// Firebaseからデータ取得
+async function cloudLoad() {
+  try {
+    const res = await fetch(`${FIREBASE_URL}/schools.json`);
+    const data = await res.json();
+    if (!data) return null;
+    return Object.values(data);
+  } catch { return null; }
+}
+
+// Firebaseにデータ保存
+async function cloudSave(schools) {
+  try {
+    const obj = {};
+    schools.forEach(s => { obj[s.id] = s; });
+    await fetch(`${FIREBASE_URL}/schools.json`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(obj)
+    });
+  } catch (e) { console.error("保存失敗", e); }
+}
+
+function tagStyle(tag) {
+  const colors = { "重点校": "#dbeafe", "要フォロー": "#fef3c7", "競合強い": "#fee2e2", "良好": "#d1fae5", "新規開拓": "#ede9fe" };
+  return { display: "inline-block", fontSize: 11, padding: "1px 7px", borderRadius: 10, background: colors[tag] || "#f3f4f6", marginRight: 3 };
+}
+
+function Row({ label, value }) {
+  return (
+    <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+      <span style={{ color: "#888", fontSize: 12, minWidth: 55 }}>{label}</span>
+      <span style={{ fontSize: 13 }}>{value}</span>
+    </div>
+  );
+}
+
+const inputStyle = { padding: "8px 10px", borderRadius: 7, border: "1px solid #d1d5db", fontSize: 13, outline: "none", width: "100%" };
+const smallBtn = { background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 12 };
+
+function navBtn(active) {
+  return {
+    background: active ? "rgba(255,255,255,0.25)" : "transparent",
+    color: "#fff", border: "1px solid rgba(255,255,255,0.4)",
+    borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontSize: 12
+  };
+}
+
+function App() {
+  const [schools, setSchools] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [view, setView] = useState(VIEWS.LIST);
+  const [selectedId, setSelectedId] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filterTag, setFilterTag] = useState("");
+  const [lastSync, setLastSync] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      setSyncing(true);
+      const data = await cloudLoad();
+      setSchools(data || initialSchools);
+      setLoaded(true);
+      setSyncing(false);
+      setLastSync(new Date());
+    })();
+  }, []);
+
+  const updateSchools = useCallback(async (newSchools) => {
+    setSchools(newSchools);
+    setSyncing(true);
+    await cloudSave(newSchools);
+    setSyncing(false);
+    setLastSync(new Date());
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const interval = setInterval(async () => {
+      const data = await cloudLoad();
+      if (data) setSchools(data);
+      setLastSync(new Date());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [loaded]);
+
+  const selected = schools.find(s => s.id === selectedId);
+  const filtered = schools.filter(s => {
+    const matchSearch = s.name.includes(search) || (s.address||"").includes(search) || (s.assignee||"").includes(search);
+    const matchTag = filterTag ? s.tags?.includes(filterTag) : true;
+    return matchSearch && matchTag;
+  });
+
+  function daysSince(dateStr) {
+    if (!dateStr) return null;
+    return Math.floor((Date.now() - new Date(dateStr)) / 86400000);
+  }
+  function lastVisit(school) {
+    if (!school.visits?.length) return null;
+    return school.visits[school.visits.length - 1].date;
+  }
+
+  if (!loaded) return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", flexDirection:"column", gap:12, color:"#555" }}>
+      <div style={{ fontSize:24 }}>📋</div>
+      <div>データを読み込み中...</div>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight:"100vh" }}>
+      <div style={{ background:"#1a56a0", color:"#fff", padding:"12px 16px", display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", position:"sticky", top:0, zIndex:100 }}>
+        <span style={{ fontSize:16, fontWeight:700 }}>📋 広報訪問管理</span>
+        <div style={{ flex:1 }} />
+        {syncing && <span style={{ fontSize:11, opacity:0.8 }}>🔄 同期中...</span>}
+        {!syncing && lastSync && <span style={{ fontSize:11, opacity:0.7 }}>✅ {lastSync.getHours()}:{String(lastSync.getMinutes()).padStart(2,"0")} 同期済</span>}
+        <button onClick={() => setView(VIEWS.LIST)} style={navBtn(view===VIEWS.LIST)}>一覧</button>
+        <button onClick={() => setView(VIEWS.PARSE)} style={navBtn(view===VIEWS.PARSE)}>LINE解析</button>
+        <button onClick={() => setView(VIEWS.ADD)} style={navBtn(view===VIEWS.ADD)}>＋登録</button>
+      </div>
+
+      <div style={{ maxWidth:820, margin:"0 auto", padding:12 }}>
+        {view===VIEWS.LIST && <ListView schools={filtered} search={search} setSearch={setSearch} filterTag={filterTag} setFilterTag={setFilterTag} onSelect={id=>{setSelectedId(id);setView(VIEWS.DETAIL);}} lastVisit={lastVisit} daysSince={daysSince} />}
+        {view===VIEWS.DETAIL && selected && <DetailView school={selected} onBack={()=>setView(VIEWS.LIST)} onUpdate={updated=>updateSchools(schools.map(s=>s.id===updated.id?updated:s))} />}
+        {view===VIEWS.PARSE && <ParseView schools={schools} onSave={school=>{
+          const exists = schools.find(s=>s.name===school.name);
+          let newSchools;
+          if (exists) {
+            newSchools = schools.map(s=>s.name===school.name?{...s,visits:[...(s.visits||[]),...(school.visits||[])],teacher:school.teacher?.name?school.teacher:s.teacher,career:school.career||s.career,tags:school.tags?.length?school.tags:s.tags}:s);
+          } else {
+            newSchools = [...schools,{...school,id:Date.now()}];
+          }
+          updateSchools(newSchools);
+          setView(VIEWS.LIST);
+        }} />}
+        {view===VIEWS.ADD && <AddSchoolView onBack={()=>setView(VIEWS.LIST)} onSave={school=>{updateSchools([...schools,{...school,id:Date.now()}]);setView(VIEWS.LIST);}} />}
+      </div>
+    </div>
+  );
+}
+
+function ListView({ schools, search, setSearch, filterTag, setFilterTag, onSelect, lastVisit, daysSince }) {
+  return (
+    <div>
+      <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap" }}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="学校名・担当者で検索..." style={{ flex:1, minWidth:160, padding:"7px 10px", borderRadius:7, border:"1px solid #ccc", fontSize:13 }} />
+        <select value={filterTag} onChange={e=>setFilterTag(e.target.value)} style={{ padding:"7px 8px", borderRadius:7, border:"1px solid #ccc", fontSize:13 }}>
+          <option value="">タグ：すべて</option>
+          {TAGS.map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      {schools.length===0 && <div style={{ color:"#888", textAlign:"center", padding:40 }}>該当する高校がありません</div>}
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {schools.map(s=>{
+          const lv=lastVisit(s);
+          const days=lv?daysSince(lv):null;
+          const urgent=days!==null&&days>180;
+          return (
+            <div key={s.id} onClick={()=>onSelect(s.id)} style={{ background:"#fff", borderRadius:10, padding:"12px 14px", cursor:"pointer", border:urgent?"1.5px solid #f59e0b":"1px solid #e5e7eb", boxShadow:"0 1px 3px rgba(0,0,0,0.06)" }}>
+              <div style={{ display:"flex", alignItems:"flex-start", gap:8 }}>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:700, fontSize:15 }}>{s.name}</div>
+                  <div style={{ color:"#666", fontSize:12, marginTop:2 }}>{s.address}　生徒数：{s.students||"—"}名　担当：{s.assignee||"—"}</div>
+                  <div style={{ marginTop:4 }}>{s.tags?.map(t=><span key={t} style={tagStyle(t)}>{t}</span>)}</div>
+                </div>
+                <div style={{ fontSize:11, color:urgent?"#d97706":"#888", textAlign:"right", whiteSpace:"nowrap" }}>
+                  {lv?<>{lv}<br/>{days}日前</>:"未訪問"}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DetailView({ school, onBack, onUpdate }) {
+  const [tab, setTab] = useState("info");
+  const [newVisit, setNewVisit] = useState({ date:new Date().toISOString().slice(0,10), author:"", note:"" });
+  const [editTeacher, setEditTeacher] = useState(false);
+  const [teacher, setTeacher] = useState(school.teacher||{name:"",role:"",memo:""});
+  const [editCareer, setEditCareer] = useState(false);
+  const [career, setCareer] = useState(school.career||"");
+  const [editTags, setEditTags] = useState(false);
+  const [tags, setTags] = useState(school.tags||[]);
+  const tabs=[["info","基本情報"],["teacher","担当教員"],["visits","訪問記録"],["career","進路傾向"]];
+
+  return (
+    <div>
+      <button onClick={onBack} style={{ background:"none", border:"none", color:"#1a56a0", cursor:"pointer", fontSize:13, marginBottom:8 }}>← 一覧に戻る</button>
+      <div style={{ background:"#fff", borderRadius:10, padding:14, boxShadow:"0 1px 3px rgba(0,0,0,0.08)" }}>
+        <div style={{ fontSize:17, fontWeight:700, marginBottom:4 }}>{school.name}</div>
+        <div style={{ color:"#666", fontSize:12, marginBottom:12 }}>{school.address}　生徒数：{school.students||"—"}名　担当：{school.assignee||"—"}</div>
+        <div style={{ display:"flex", gap:0, marginBottom:14, borderBottom:"2px solid #e5e7eb", overflowX:"auto" }}>
+          {tabs.map(([key,label])=>(
+            <button key={key} onClick={()=>setTab(key)} style={{ border:"none", background:"none", padding:"6px 12px", cursor:"pointer", fontWeight:tab===key?700:400, color:tab===key?"#1a56a0":"#555", borderBottom:tab===key?"2px solid #1a56a0":"2px solid transparent", marginBottom:-2, fontSize:13, whiteSpace:"nowrap" }}>{label}</button>
+          ))}
+        </div>
+
+        {tab==="info" && (
+          <div>
+            <Row label="所在地" value={school.address} />
+            <Row label="生徒数" value={school.students?`${school.students}名`:"—"} />
+            <Row label="担当者" value={school.assignee||"—"} />
+            <div style={{ marginTop:10 }}>
+              <span style={{ fontSize:12, color:"#888" }}>タグ：</span>
+              {!editTags?(
+                <>{(school.tags||[]).map(t=><span key={t} style={tagStyle(t)}>{t}</span>)}
+                  <button onClick={()=>setEditTags(true)} style={{ ...smallBtn, marginLeft:8 }}>編集</button></>
+              ):(
+                <div style={{ marginTop:6 }}>
+                  {TAGS.map(t=>(
+                    <label key={t} style={{ marginRight:10, fontSize:13, display:"inline-block", marginBottom:4 }}>
+                      <input type="checkbox" checked={tags.includes(t)} onChange={e=>setTags(e.target.checked?[...tags,t]:tags.filter(x=>x!==t))} /> {t}
+                    </label>
+                  ))}
+                  <div style={{ marginTop:8 }}>
+                    <button onClick={()=>{onUpdate({...school,tags});setEditTags(false);}} style={{ ...smallBtn, background:"#1a56a0", color:"#fff" }}>保存</button>
+                    <button onClick={()=>setEditTags(false)} style={{ ...smallBtn, marginLeft:8 }}>キャンセル</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab==="teacher" && (
+          <div>
+            {!editTeacher?(
+              <>
+                <Row label="氏名" value={school.teacher?.name||"—"} />
+                <Row label="役職" value={school.teacher?.role||"—"} />
+                <Row label="メモ" value={school.teacher?.memo||"—"} />
+                <button onClick={()=>setEditTeacher(true)} style={{ ...smallBtn, marginTop:8 }}>編集</button>
+              </>
+            ):(
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                <input placeholder="氏名" value={teacher.name} onChange={e=>setTeacher({...teacher,name:e.target.value})} style={inputStyle} />
+                <input placeholder="役職" value={teacher.role} onChange={e=>setTeacher({...teacher,role:e.target.value})} style={inputStyle} />
+                <textarea placeholder="人物メモ" value={teacher.memo} onChange={e=>setTeacher({...teacher,memo:e.target.value})} rows={3} style={{ ...inputStyle, resize:"vertical" }} />
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={()=>{onUpdate({...school,teacher});setEditTeacher(false);}} style={{ ...smallBtn, background:"#1a56a0", color:"#fff" }}>保存</button>
+                  <button onClick={()=>setEditTeacher(false)} style={smallBtn}>キャンセル</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab==="visits" && (
+          <div>
+            <div style={{ marginBottom:12 }}>
+              {!(school.visits?.length)&&<div style={{ color:"#aaa", fontSize:13 }}>訪問記録がありません</div>}
+              {[...(school.visits||[])].reverse().map((v,i)=>(
+                <div key={i} style={{ borderLeft:"3px solid #1a56a0", paddingLeft:12, marginBottom:12 }}>
+                  <div style={{ fontSize:12, color:"#888" }}>{v.date}　{v.author&&`担当：${v.author}`}</div>
+                  <div style={{ fontSize:13, marginTop:3, whiteSpace:"pre-wrap" }}>{v.note}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ background:"#f9fafb", borderRadius:8, padding:12, border:"1px solid #e5e7eb" }}>
+              <div style={{ fontWeight:600, fontSize:13, marginBottom:8 }}>＋ 新規訪問記録</div>
+              <div style={{ display:"flex", gap:8, marginBottom:8, flexWrap:"wrap" }}>
+                <input type="date" value={newVisit.date} onChange={e=>setNewVisit({...newVisit,date:e.target.value})} style={{ ...inputStyle, flex:1, minWidth:130 }} />
+                <input placeholder="記録者名" value={newVisit.author} onChange={e=>setNewVisit({...newVisit,author:e.target.value})} style={{ ...inputStyle, flex:1, minWidth:100 }} />
+              </div>
+              <textarea placeholder="会話内容・商談メモ..." value={newVisit.note} onChange={e=>setNewVisit({...newVisit,note:e.target.value})} rows={3} style={{ ...inputStyle, resize:"vertical" }} />
+              <button onClick={()=>{if(!newVisit.note.trim())return;onUpdate({...school,visits:[...(school.visits||[]),newVisit]});setNewVisit({date:new Date().toISOString().slice(0,10),author:"",note:"" });}} style={{ marginTop:8, background:"#1a56a0", color:"#fff", border:"none", borderRadius:6, padding:"7px 18px", cursor:"pointer", fontSize:13 }}>保存</button>
+            </div>
+          </div>
+        )}
+
+        {tab==="career" && (
+          <div>
+            {!editCareer?(
+              <>
+                <div style={{ fontSize:13, whiteSpace:"pre-wrap", color:school.career?"#222":"#aaa" }}>{school.career||"進路傾向の記録がありません"}</div>
+                <button onClick={()=>setEditCareer(true)} style={{ ...smallBtn, marginTop:10 }}>編集</button>
+              </>
+            ):(
+              <>
+                <textarea value={career} onChange={e=>setCareer(e.target.value)} rows={5} style={{ ...inputStyle, resize:"vertical" }} placeholder="進路実績・志望傾向を記入..." />
+                <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                  <button onClick={()=>{onUpdate({...school,career});setEditCareer(false);}} style={{ ...smallBtn, background:"#1a56a0", color:"#fff" }}>保存</button>
+                  <button onClick={()=>setEditCareer(false)} style={smallBtn}>キャンセル</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ParseView({ schools, onSave }) {
+  const [text, setText] = useState("");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function analyze() {
+    if (!text.trim()) return;
+    setLoading(true); setError(""); setResult(null);
+    try {
+      const today = new Date().toISOString().slice(0,10);
+      const schoolNames = schools.map(s=>s.name).join("、");
+      const prompt = `あなたは専門学校の広報担当者のアシスタントです。以下のLINEメッセージから高校訪問に関する情報を抽出してください。\n\n既存の学校リスト：${schoolNames||"なし"}\n今日の日付：${today}\n\nLINEメッセージ：\n${text}\n\n以下のJSON形式のみで返答してください（余分なテキスト・マークダウン不要）：\n{"name":"学校名","address":"所在地","students":null,"assignee":"担当者名","tags":[],"teacher":{"name":"教員名","role":"役職","memo":"人物メモ"},"visits":[{"date":"YYYY-MM-DD","author":"記録者名","note":"会話内容・商談メモ"}],"career":"進路実績・志望傾向"}`;
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":"YOUR_ANTHROPIC_API_KEY","anthropic-version":"2023-06-01"},
+        body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{role:"user",content:prompt}] })
+      });
+      const data = await res.json();
+      const raw = data.content?.map(c=>c.text||"").join("").trim();
+      const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+      setResult(parsed);
+    } catch { setError("解析に失敗しました。もう一度お試しください。"); }
+    setLoading(false);
+  }
+
+  return (
+    <div>
+      <div style={{ background:"#fff", borderRadius:10, padding:14, boxShadow:"0 1px 3px rgba(0,0,0,0.08)", marginBottom:12 }}>
+        <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>📱 LINEテキスト自動解析</div>
+        <div style={{ fontSize:12, color:"#888", marginBottom:8 }}>グループLINEのメッセージをそのまま貼り付けてください</div>
+        <textarea value={text} onChange={e=>setText(e.target.value)} rows={6} placeholder="例：○○高校行ってきました！進路の山田先生と面談。今年は医療系に興味ある生徒が多いとのこと。3年生は140名。" style={{ ...inputStyle, resize:"vertical" }} />
+        <button onClick={analyze} disabled={loading||!text.trim()} style={{ marginTop:8, background:loading?"#93c5fd":"#1a56a0", color:"#fff", border:"none", borderRadius:6, padding:"8px 20px", cursor:loading?"default":"pointer", fontSize:13 }}>
+          {loading?"解析中...":"AIで解析する"}
+        </button>
+        {error&&<div style={{ color:"red", fontSize:12, marginTop:6 }}>{error}</div>}
+      </div>
+      {result&&(
+        <div style={{ background:"#fff", borderRadius:10, padding:14, boxShadow:"0 1px 3px rgba(0,0,0,0.08)" }}>
+          <div style={{ fontWeight:700, fontSize:14, marginBottom:12, color:"#1a56a0" }}>✅ 解析結果（確認してから保存）</div>
+          <Row label="学校名" value={result.name||"—"} />
+          <Row label="所在地" value={result.address||"—"} />
+          <Row label="生徒数" value={result.students?`${result.students}名`:"—"} />
+          <Row label="担当者" value={result.assignee||"—"} />
+          {result.teacher?.name&&<><Row label="教員名" value={result.teacher.name} /><Row label="役職" value={result.teacher.role||"—"} /><Row label="人物メモ" value={result.teacher.memo||"—"} /></>}
+          {result.visits?.[0]&&<><Row label="訪問日" value={result.visits[0].date} /><Row label="メモ" value={result.visits[0].note} /></>}
+          {result.career&&<Row label="進路傾向" value={result.career} />}
+          <div style={{ display:"flex", gap:8, marginTop:12 }}>
+            <button onClick={()=>onSave(result)} style={{ background:"#1a56a0", color:"#fff", border:"none", borderRadius:6, padding:"8px 20px", cursor:"pointer", fontSize:13 }}>保存する</button>
+            <button onClick={()=>setResult(null)} style={smallBtn}>やり直す</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddSchoolView({ onBack, onSave }) {
+  const [form, setForm] = useState({ name:"", address:"", students:"", assignee:"", tags:[] });
+  function set(k,v){ setForm(f=>({...f,[k]:v})); }
+  return (
+    <div>
+      <button onClick={onBack} style={{ background:"none", border:"none", color:"#1a56a0", cursor:"pointer", fontSize:13, marginBottom:8 }}>← 一覧に戻る</button>
+      <div style={{ background:"#fff", borderRadius:10, padding:14, boxShadow:"0 1px 3px rgba(0,0,0,0.08)" }}>
+        <div style={{ fontWeight:700, fontSize:15, marginBottom:12 }}>高校新規登録</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          <input placeholder="学校名 *" value={form.name} onChange={e=>set("name",e.target.value)} style={inputStyle} />
+          <input placeholder="所在地" value={form.address} onChange={e=>set("address",e.target.value)} style={inputStyle} />
+          <input placeholder="生徒数" type="number" value={form.students} onChange={e=>set("students",e.target.value)} style={inputStyle} />
+          <input placeholder="担当者名" value={form.assignee} onChange={e=>set("assignee",e.target.value)} style={inputStyle} />
+          <div>
+            <div style={{ fontSize:12, color:"#888", marginBottom:4 }}>タグ</div>
+            {TAGS.map(t=>(
+              <label key={t} style={{ marginRight:10, fontSize:13, display:"inline-block", marginBottom:4 }}>
+                <input type="checkbox" checked={form.tags.includes(t)} onChange={e=>set("tags",e.target.checked?[...form.tags,t]:form.tags.filter(x=>x!==t))} /> {t}
+              </label>
+            ))}
+          </div>
+          <button onClick={()=>{ if(!form.name.trim())return; onSave({...form,students:form.students?parseInt(form.students):null,visits:[],teacher:{name:"",role:"",memo:""},career:""}); }} style={{ background:"#1a56a0", color:"#fff", border:"none", borderRadius:6, padding:"9px 20px", cursor:"pointer", fontSize:13 }}>登録する</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
