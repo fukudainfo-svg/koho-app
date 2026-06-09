@@ -352,9 +352,9 @@ function ParseView({ schools, onSave }) {
       const schoolNames = schools.map(s=>s.name).join("、");
       const prompt = `あなたは専門学校の広報担当者のアシスタントです。以下のLINEメッセージから高校訪問に関する情報を抽出してください。\n\n既存の学校リスト：${schoolNames||"なし"}\n今日の日付：${today}\n\nLINEメッセージ：\n${text}\n\n以下のJSON形式のみで返答してください（余分なテキスト・マークダウン不要）：\n{"name":"学校名","address":"所在地","students":null,"assignee":"担当者名","tags":[],"teacher":{"name":"教員名","role":"役職","memo":"人物メモ"},"visits":[{"date":"YYYY-MM-DD","author":"記録者名","note":"会話内容・商談メモ"}],"career":"進路実績・志望傾向"}`;
 
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("/.netlify/functions/claude", {
         method:"POST",
-        headers:{"Content-Type":"application/json","x-api-key":"YOUR_ANTHROPIC_API_KEY","anthropic-version":"2023-06-01"},
+        headers:{"Content-Type":"application/json","anthropic-version":"2023-06-01"},
         body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{role:"user",content:prompt}] })
       });
       const data = await res.json();
