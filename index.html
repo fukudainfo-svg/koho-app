@@ -19,11 +19,7 @@
 <script type="text/babel">
 const { useState, useEffect, useCallback } = React;
 
-// ========== 設定 ==========
-// ★ここにFirebaseの設定を入れます（後で変更）
-const FIREBASE_URL = "YOUR_FIREBASE_URL";
-// ==========================
-
+const FIREBASE_URL = "https://koho-app-default-rtdb.firebaseio.com";
 const TAGS = ["重点校", "要フォロー", "競合強い", "良好", "新規開拓"];
 const VIEWS = { LIST: "list", DETAIL: "detail", PARSE: "parse", ADD: "add" };
 
@@ -41,7 +37,10 @@ const initialSchools = [
   }
 ];
 
-// Firebaseからデータ取得
+function normalizeSchoolName(name) {
+  return (name || "").replace(/高等学校/g, "高校").replace(/高等専門学校/g, "高専").trim();
+}
+
 async function cloudLoad() {
   try {
     const res = await fetch(`${FIREBASE_URL}/schools.json`);
@@ -51,7 +50,6 @@ async function cloudLoad() {
   } catch { return null; }
 }
 
-// Firebaseにデータ保存
 async function cloudSave(schools) {
   try {
     const obj = {};
@@ -165,8 +163,9 @@ function App() {
 
       <div style={{ maxWidth:820, margin:"0 auto", padding:12 }}>
         {view===VIEWS.LIST && <ListView schools={filtered} search={search} setSearch={setSearch} filterTag={filterTag} setFilterTag={setFilterTag} onSelect={id=>{setSelectedId(id);setView(VIEWS.DETAIL);}} lastVisit={lastVisit} daysSince={daysSince} />}
-        {view===VIEWS.DETAIL && selected && <DetailView school={selected} onBack={()=>setView(VIEWS.LIST)} onUpdate={updated=>updateSchools(schools.map(s=>s.id===updated.id?updated:s))} onDelete={id=>{updateSchools(schools.filter(s=>s.id!==id));setView(VIEWS.LIST);}} />}
+        {view===VIEWS.DETAIL && selected && <DetailView key={selected.id} school={selected} onBack={()=>setView(VIEWS.LIST)} onUpdate={updated=>updateSchools(schools.map(s=>s.id===updated.id?updated:s))} onDelete={id=>{updateSchools(schools.filter(s=>s.id!==id));setView(VIEWS.LIST);}} />}
         {view===VIEWS.PARSE && <ParseView schools={schools} onSave={school=>{
+          school.name = normalizeSchoolName(school.name);
           const exists = schools.find(s=>s.name===school.name);
           let newSchools;
           if (exists) {
@@ -219,10 +218,6 @@ function ListView({ schools, search, setSearch, filterTag, setFilterTag, onSelec
   );
 }
 
-function normalizeSchoolName(name) {
-  return (name || "").replace(/高等学校/g, "高校").replace(/高等専門学校/g, "高専").trim();
-}
-
 function DetailView({ school, onBack, onUpdate, onDelete }) {
   const [tab, setTab] = useState("info");
   const [newVisit, setNewVisit] = useState({ date:new Date().toISOString().slice(0,10), author:"", note:"" });
@@ -233,6 +228,18 @@ function DetailView({ school, onBack, onUpdate, onDelete }) {
   const [editTags, setEditTags] = useState(false);
   const [tags, setTags] = useState(school.tags||[]);
   const tabs=[["info","基本情報"],["teacher","担当教員"],["visits","訪問記録"],["career","進路傾向"]];
+
+  function addVisit() {
+    if (!newVisit.note.trim()) return;
+    onUpdate({ ...school, visits: [...(school.visits || []), newVisit] });
+    setNewVisit({ date: new Date().toISOString().slice(0,10), author: "", note: "" });
+  }
+
+  function handleDelete() {
+    if (window.confirm(`「${school.name}」を削除しますか？`)) {
+      onDelete(school.id);
+    }
+  }
 
   return (
     <div>
@@ -317,7 +324,7 @@ function DetailView({ school, onBack, onUpdate, onDelete }) {
                 <input placeholder="記録者名" value={newVisit.author} onChange={e=>setNewVisit({...newVisit,author:e.target.value})} style={{ ...inputStyle, flex:1, minWidth:100 }} />
               </div>
               <textarea placeholder="会話内容・商談メモ..." value={newVisit.note} onChange={e=>setNewVisit({...newVisit,note:e.target.value})} rows={3} style={{ ...inputStyle, resize:"vertical" }} />
-              <button onClick={()=>{if(!newVisit.note.trim())return;onUpdate({...school,visits:[...(school.visits||[]),newVisit]});setNewVisit({date:new Date().toISOString().slice(0,10),author:"",note:"" });}} style={{ marginTop:8, background:"#1a56a0", color:"#fff", border:"none", borderRadius:6, padding:"7px 18px", cursor:"pointer", fontSize:13 }}>保存</button>
+              <button onClick={addVisit} style={{ marginTop:8, background:"#1a56a0", color:"#fff", border:"none", borderRadius:6, padding:"7px 18px", cursor:"pointer", fontSize:13 }}>保存</button>
             </div>
           </div>
         )}
@@ -357,16 +364,17 @@ function ParseView({ schools, onSave }) {
     try {
       const today = new Date().toISOString().slice(0,10);
       const schoolNames = schools.map(s=>s.name).join("、");
-      const prompt = `あなたは専門学校の広報担当者のアシスタントです。以下のLINEメッセージから高校訪問に関する情報を抽出してください。\n\n既存の学校リスト：${schoolNames||"なし"}\n今日の日付：${today}\n\nLINEメッセージ：\n${text}\n\n以下のJSON形式のみで返答してください（余分なテキスト・マークダウン不要）：\n{"name":"学校名","address":"所在地","students":null,"assignee":"担当者名","tags":[],"teacher":{"name":"教員名","role":"役職","memo":"人物メモ"},"visits":[{"date":"YYYY-MM-DD","author":"記録者名","note":"会話内容・商談メモ"}],"career":"進路実績・志望傾向"}`;
+      const prompt = `あなたは専門学校の広報担当者のアシスタントです。以下のLINEメッセージから高校訪問に関する情報を抽出してください。\n\n既存の学校リスト：${schoolNames||"なし"}\n今日の日付：${today}\n\nLINEメッセージ：\n${text}\n\n以下のJSON形式のみで返答してください（余分なテキスト・マークダウン不要）：\n{"name":"学校名（高等学校は高校に統一）","address":"所在地","students":null,"assignee":"担当者名","tags":[],"teacher":{"name":"教員名","role":"役職","memo":"人物メモ"},"visits":[{"date":"YYYY-MM-DD","author":"記録者名","note":"会話内容・商談メモ"}],"career":"進路実績・志望傾向"}`;
 
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("/.netlify/functions/claude", {
         method:"POST",
-        headers:{"Content-Type":"application/json","x-api-key":"YOUR_ANTHROPIC_API_KEY","anthropic-version":"2023-06-01"},
-        body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{role:"user",content:prompt}] })
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ messages:[{role:"user",content:prompt}] })
       });
       const data = await res.json();
       const raw = data.content?.map(c=>c.text||"").join("").trim();
       const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+      parsed.name = normalizeSchoolName(parsed.name);
       setResult(parsed);
     } catch { setError("解析に失敗しました。もう一度お試しください。"); }
     setLoading(false);
@@ -424,7 +432,7 @@ function AddSchoolView({ onBack, onSave }) {
               </label>
             ))}
           </div>
-          <button onClick={()=>{ if(!form.name.trim())return; onSave({...form,students:form.students?parseInt(form.students):null,visits:[],teacher:{name:"",role:"",memo:""},career:""}); }} style={{ background:"#1a56a0", color:"#fff", border:"none", borderRadius:6, padding:"9px 20px", cursor:"pointer", fontSize:13 }}>登録する</button>
+          <button onClick={()=>{ if(!form.name.trim())return; onSave({...form,name:normalizeSchoolName(form.name),students:form.students?parseInt(form.students):null,visits:[],teacher:{name:"",role:"",memo:""},career:""}); }} style={{ background:"#1a56a0", color:"#fff", border:"none", borderRadius:6, padding:"9px 20px", cursor:"pointer", fontSize:13 }}>登録する</button>
         </div>
       </div>
     </div>
