@@ -21,7 +21,7 @@ const { useState, useEffect, useCallback } = React;
 
 // ========== 設定 ==========
 // ★ここにFirebaseの設定を入れます（後で変更）
-const FIREBASE_URL = "https://koho-app-default-rtdb.firebaseio.com";
+const FIREBASE_URL = "YOUR_FIREBASE_URL";
 // ==========================
 
 const TAGS = ["重点校", "要フォロー", "競合強い", "良好", "新規開拓"];
@@ -165,7 +165,7 @@ function App() {
 
       <div style={{ maxWidth:820, margin:"0 auto", padding:12 }}>
         {view===VIEWS.LIST && <ListView schools={filtered} search={search} setSearch={setSearch} filterTag={filterTag} setFilterTag={setFilterTag} onSelect={id=>{setSelectedId(id);setView(VIEWS.DETAIL);}} lastVisit={lastVisit} daysSince={daysSince} />}
-        {view===VIEWS.DETAIL && selected && <DetailView school={selected} onBack={()=>setView(VIEWS.LIST)} onUpdate={updated=>updateSchools(schools.map(s=>s.id===updated.id?updated:s))} />}
+        {view===VIEWS.DETAIL && selected && <DetailView school={selected} onBack={()=>setView(VIEWS.LIST)} onUpdate={updated=>updateSchools(schools.map(s=>s.id===updated.id?updated:s))} onDelete={id=>{updateSchools(schools.filter(s=>s.id!==id));setView(VIEWS.LIST);}} />}
         {view===VIEWS.PARSE && <ParseView schools={schools} onSave={school=>{
           const exists = schools.find(s=>s.name===school.name);
           let newSchools;
@@ -219,7 +219,11 @@ function ListView({ schools, search, setSearch, filterTag, setFilterTag, onSelec
   );
 }
 
-function DetailView({ school, onBack, onUpdate }) {
+function normalizeSchoolName(name) {
+  return (name || "").replace(/高等学校/g, "高校").replace(/高等専門学校/g, "高専").trim();
+}
+
+function DetailView({ school, onBack, onUpdate, onDelete }) {
   const [tab, setTab] = useState("info");
   const [newVisit, setNewVisit] = useState({ date:new Date().toISOString().slice(0,10), author:"", note:"" });
   const [editTeacher, setEditTeacher] = useState(false);
@@ -234,7 +238,10 @@ function DetailView({ school, onBack, onUpdate }) {
     <div>
       <button onClick={onBack} style={{ background:"none", border:"none", color:"#1a56a0", cursor:"pointer", fontSize:13, marginBottom:8 }}>← 一覧に戻る</button>
       <div style={{ background:"#fff", borderRadius:10, padding:14, boxShadow:"0 1px 3px rgba(0,0,0,0.08)" }}>
-        <div style={{ fontSize:17, fontWeight:700, marginBottom:4 }}>{school.name}</div>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+          <div style={{ fontSize:17, fontWeight:700 }}>{school.name}</div>
+          <button onClick={handleDelete} style={{ background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:6, padding:"4px 10px", cursor:"pointer", fontSize:12, color:"#dc2626" }}>削除</button>
+        </div>
         <div style={{ color:"#666", fontSize:12, marginBottom:12 }}>{school.address}　生徒数：{school.students||"—"}名　担当：{school.assignee||"—"}</div>
         <div style={{ display:"flex", gap:0, marginBottom:14, borderBottom:"2px solid #e5e7eb", overflowX:"auto" }}>
           {tabs.map(([key,label])=>(
@@ -352,9 +359,9 @@ function ParseView({ schools, onSave }) {
       const schoolNames = schools.map(s=>s.name).join("、");
       const prompt = `あなたは専門学校の広報担当者のアシスタントです。以下のLINEメッセージから高校訪問に関する情報を抽出してください。\n\n既存の学校リスト：${schoolNames||"なし"}\n今日の日付：${today}\n\nLINEメッセージ：\n${text}\n\n以下のJSON形式のみで返答してください（余分なテキスト・マークダウン不要）：\n{"name":"学校名","address":"所在地","students":null,"assignee":"担当者名","tags":[],"teacher":{"name":"教員名","role":"役職","memo":"人物メモ"},"visits":[{"date":"YYYY-MM-DD","author":"記録者名","note":"会話内容・商談メモ"}],"career":"進路実績・志望傾向"}`;
 
-      const res = await fetch("/.netlify/functions/claude", {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
         method:"POST",
-        headers:{"Content-Type":"application/json","anthropic-version":"2023-06-01"},
+        headers:{"Content-Type":"application/json","x-api-key":"YOUR_ANTHROPIC_API_KEY","anthropic-version":"2023-06-01"},
         body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{role:"user",content:prompt}] })
       });
       const data = await res.json();
